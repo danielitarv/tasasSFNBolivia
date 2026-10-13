@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero de Tasas · SFN Bolivia</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#ffffff; --ink:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --brand:#1d4ed8; --ok:#15803d; --warn:#b45309; --bad:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:#f1f5f9; color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+  }
+  header{
+    background:linear-gradient(135deg,#0f172a,#1e3a8a); color:#fff;
+    padding:20px 28px;
+  }
+  header h1{margin:0; font-size:20px; letter-spacing:.2px}
+  header p{margin:6px 0 0; font-size:13px; color:#c7d2fe}
+  .wrap{max-width:1400px; margin:0 auto; padding:20px}
+
+  #zona{
+    background:var(--panel); border:2px dashed #94a3b8; border-radius:14px;
+    padding:26px 20px; text-align:center; transition:.15s;
+  }
+  #zona.hover{border-color:var(--brand); background:#eff6ff; transform:scale(1.005)}
+  #zona h2{margin:0 0 6px; font-size:16px}
+  #zona p{margin:0; color:var(--muted); font-size:13px}
+  .fila-acciones{margin-top:14px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+  button, .boton{
+    font:inherit; font-size:13px; cursor:pointer; border-radius:9px;
+    border:1px solid var(--line); background:#fff; color:var(--ink); padding:9px 14px;
+  }
+  button:hover,.boton:hover{background:#f8fafc; border-color:#cbd5e1}
+  .boton.principal{background:var(--brand); border-color:var(--brand); color:#fff}
+  .boton.principal:hover{background:#1e40af}
+  input[type=file]{display:none}
+
+  #aviso{display:none; margin-top:14px; padding:12px 14px; border-radius:10px; font-size:13px}
+  #aviso.error{display:block; background:#fef2f2; color:var(--bad); border:1px solid #fecaca}
+  #aviso.info{display:block; background:#eff6ff; color:#1e3a8a; border:1px solid #bfdbfe}
+
+  #estado{margin-top:10px; font-size:12.5px; color:var(--muted)}
+
+  #kpis{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:18px 0}
+  .kpi{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px}
+  .kpi .et{font-size:11.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted)}
+  .kpi .va{font-size:20px; font-weight:600; margin-top:4px}
+  .kpi .su{font-size:11.5px; color:var(--muted); margin-top:2px}
+
+  .grid{display:grid; gap:16px}
+  .grid.dos{grid-template-columns:1fr 1fr}
+  @media(max-width:900px){ .grid.dos{grid-template-columns:1fr} }
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:10px 12px 4px; box-shadow:0 1px 2px rgba(15,23,42,.04);
+  }
+  .card h3{margin:6px 4px 0; font-size:14px; font-weight:600}
+  .card .sub{margin:2px 4px 6px; font-size:12px; color:var(--muted)}
+  .graf{height:420px}
+  .graf.alto{height:470px}
+  footer{max-width:1400px; margin:18px auto 40px; padding:0 20px; font-size:12px; color:var(--muted)}
+  .leyenda-inline{display:inline-block; margin-right:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tablero de Tasas de Interés · Sistema Financiero Nacional (Bolivia)</h1>
+  <p>Arrastrá y soltá el CSV de la base de tasas. Todo el procesamiento ocurre en tu navegador: no requiere Python ni servidor.</p>
+</header>
+
+<div class="wrap">
+
+  <section id="zona">
+    <h2>📄 Arrastrá y soltá aquí el archivo CSV</h2>
+    <p>o usá el botón para elegirlo &nbsp;·&nbsp; columnas requeridas: <code>Fecha Corte</code>, <code>Tipo Operación</code>, <code>Nombre Entidad</code>, <code>Segmento / Producto</code>, <code>Tasa Efectiva Anual (%)</code></p>
+    <div class="fila-acciones">
+      <label class="boton principal" for="archivo">Seleccionar archivo CSV</label>
+      <input id="archivo" type="file" accept=".csv,text/csv">
+      <button id="btnCargar" hidden>Volver a cargar otro archivo</button>
+    </div>
+    <div id="estado"></div>
+  </section>
+
+  <div id="aviso"></div>
+
+  <section id="panel" hidden>
+    <div id="kpis"></div>
+
+    <div class="card">
+      <h3>1. Evolución de la tasa promedio por tipo de producto</h3>
+      <div class="sub">Promedio entre los bancos de cada mes, una línea por producto (12 cortes mensuales).</div>
+      <div id="graf1" class="graf alto"></div>
+    </div>
+
+    <div class="grid dos" style="margin-top:16px">
+      <div class="card">
+        <h3>2. Máximos y mínimos · Tasas activas</h3>
+        <div class="sub">Por producto de operación activa, sobre todos los bancos y meses.</div>
+        <div id="graf2" class="graf"></div>
+      </div>
+      <div class="card">
+        <h3>3. Máximos y mínimos · Tasas pasivas</h3>
+        <div class="sub">Por producto de operación pasiva, sobre todos los bancos y meses.</div>
+        <div id="graf3" class="graf"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>4. Dispersión por banco de las tasas promedio</h3>
+      <div class="sub">Cada punto es el promedio de un banco; la barra vertical muestra su recorrido mínimo–máximo.</div>
+      <div id="graf4" class="graf alto"></div>
+    </div>
+
+    <footer>
+      Fuente: base de tasas del SFN (Bolivia) cargada desde <span id="nomArchivo">—</span>.
+      Las cifras se recalculan en el navegador con PapaParse y se grafican con Plotly.js.
+    </footer>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var CSV_AUTOCARGA = "base_tasas_sfn_bolivia.csv";
+  var MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  var COLORES = ["#1d4ed8","#dc2626","#15803d","#d97706","#7c3aed","#0891b2","#be185d","#4d7c0f"];
+
+  var COL = {
+    fecha:    ["fecha_corte","fecha","periodo"],
+    op:       ["tipo_operacion","tipo_operacion "],
+    entidad:  ["tipo_entidad"],
+    banco:    ["nombre_entidad","entidad","banco"],
+    moneda:   ["moneda"],
+    producto: ["segmento_producto","producto","segmento"],
+    tasa:     ["tasa_efectiva_anual","tasa_efectiva_anual_pct","tasa"]
+  };
+
+  var $$ = function (id) { return document.getElementById(id); };
+
+  /* ---------------------------------------------------------- utilidades */
+
+  function sinAcentos(s) {
+    return (s === null || s === undefined ? "" : String(s))
+      .replace(/^\uFEFF/, "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, "_");
+  }
+
+  function aNumero(v) {
+    if (typeof v === "number") return v;
+    var t = String(v === null || v === undefined ? "" : v).trim();
+    if (!t) return NaN;
+    // admite "15,62" y "15.62"
+    t = t.replace(/\s/g, "");
+    if (t.indexOf(",") > -1 && t.indexOf(".") > -1) t = t.replace(/\./g, "").replace(",", ".");
+    else t = t.replace(",", ".");
+    t = t.replace(/[^0-9.eE+-]/g, "");
+    return parseFloat(t);
+  }
+
+  function etiquetaFecha(iso) {
+    var m = /^(\d{4})[-/](\d{2})/.exec(String(iso || "").trim());
+    if (m) return MESES[parseInt(m[2], 10) - 1] + "-" + m[1];
+    return String(iso || "").trim();
+  }
+
+  function promedio(xs) {
+    if (!xs.length) return NaN;
+    var s = 0;
+    for (var i = 0; i < xs.length; i++) s += xs[i];
+    return s / xs.length;
+  }
+
+  function agrupar(arr, clave) {
+    var m = new Map();
+    arr.forEach(function (x) {
+      var k = clave(x);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(x);
+    });
+    return m;
+  }
+
+  // Orden natural: ignora mayúsculas y acentos, y trata los números como números
+  // (DPF 180 días < DPF 360 días < DPF > 1080 días).
+  var COLADOR = (typeof Intl !== "undefined" && Intl.Collator)
+    ? new Intl.Collator("en", { sensitivity: "base", numeric: true }) : null;
+
+  function compararTexto(a, b) {
+    var x = String(a === null || a === undefined ? "" : a);
+    var y = String(b === null || b === undefined ? "" : b);
+    if (COLADOR) return COLADOR.compare(x, y);
+    x = x.toLowerCase(); y = y.toLowerCase();
+    return x < y ? -1 : (x > y ? 1 : 0);
+  }
+
+  // Para los DPF el dígito manda sobre el signo: > 1080 días va al final.
+  function claveProducto(p) {
+    var m = /(\d+)/.exec(String(p));
+    return m ? parseInt(m[1], 10) : -1;
+  }
+
+  function ordenarProductos(a, b) {
+    var ka = claveProducto(a), kb = claveProducto(b);
+    if (ka !== kb) return ka - kb;
+    return compararTexto(a, b);
+  }
+
+  function ordenarBancos(a, b) { return compararTexto(a, b); }
+
+  function colorTipo(tipo) {
+    return /pasiv/i.test(tipo) ? "#7c3aed" : "#1d4ed8";
+  }
+
+  /* --------------------------------------------------- lectura del CSV */
+
+  function mapearColumnas(campos) {
+    var disponibles = {};
+    (campos || []).forEach(function (c) { disponibles[sinAcentos(c)] = c; });
+    var mapa = {};
+    Object.keys(COL).forEach(function (destino) {
+      var opciones = COL[destino];
+      for (var i = 0; i < opciones.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(disponibles, opciones[i])) {
+          mapa[destino] = disponibles[opciones[i]];
+          return;
+        }
+      }
+    });
+    return mapa;
+  }
+
+  function aviso(clase, texto) {
+    var el = $$("aviso");
+    el.className = clase;
+    el.textContent = texto;
+  }
+
+  function estado(texto) { $$("estado").textContent = texto || ""; }
+
+  function cargarTexto(texto, nombreArchivo) {
+    if (typeof Papa === "undefined" || typeof Plotly === "undefined") {
+      aviso("error", "No se pudieron cargar PapaParse / Plotly desde el CDN. Verificá tu conexión a internet y volvé a abrir la página.");
+      return;
+    }
+
+    var res = Papa.parse(texto.replace(/^\uFEFF/, "").trim(), {
+      header: true,
+      skipEmptyLines: "greedy",
+      transformHeader: function (h) { return String(h).replace(/^\uFEFF/, "").trim(); }
+    });
+
+    var mapa = mapearColumnas(res.meta.fields);
+    var faltantes = ["fecha", "banco", "producto", "tasa"].filter(function (k) { return !mapa[k]; });
+    if (faltantes.length) {
+      aviso("error", "El CSV no tiene las columnas necesarias. Faltan: " + faltantes.join(", ") +
+        ". Encontradas: " + (res.meta.fields || []).join(" | "));
+      return;
+    }
+
+    var filas = [];
+    res.data.forEach(function (r) {
+      var tasa = aNumero(r[mapa.tasa]);
+      var fecha = String(r[mapa.fecha] || "").trim();
+      var banco = String(r[mapa.banco] || "").trim();
+      var producto = String(r[mapa.producto] || "").trim();
+      if (!fecha || !banco || !producto || !isFinite(tasa)) return;
+      filas.push({
+        fecha: fecha,
+        op: String((mapa.op ? r[mapa.op] : "") || "").trim() || "Sin clasificar",
+        entidad: String((mapa.entidad ? r[mapa.entidad] : "") || "").trim(),
+        banco: banco,
+        moneda: String((mapa.moneda ? r[mapa.moneda] : "") || "").trim(),
+        producto: producto,
+        tasa: tasa
+      });
+    });
+
+    if (!filas.length) {
+      aviso("error", "No se encontró ninguna fila válida (fecha, banco, producto y tasa numérica).");
+      return;
+    }
+
+    aviso("info", "✔ Archivo cargado: " + nombreArchivo + " — " + filas.length + " registros leídos" +
+      (res.errors && res.errors.length ? " (" + res.errors.length + " advertencias de formato)" : "") + ".");
+
+    render(filas, nombreArchivo);
+  }
+
+  /* ------------------------------------------------------------ gráficos */    var layoutBase = {
+    template: "plotly_white",
+    font: { family: '"Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif', size: 11.5, color: "#0f172a" },
+    margin: { l: 62, r: 24, t: 26, b: 84 },
+    legend: { orientation: "h", y: -0.22, x: 0, font: { size: 11 } },
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    hovermode: "closest"
+  };
+  var configPlot = { responsive: true, displaylogo: false, locale: "es",
+    modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"] };
+
+  // Leyenda horizontal anclada al borde inferior del área: si el texto se parte
+  // en varias filas crece hacia arriba y nunca queda recortada.
+  function leyendaAbajo() {
+    return { orientation: "h", xref: "container", x: 0, yref: "container", y: 0.015, yanchor: "bottom" };
+  }
+
+  function layout(extra) {
+    var l = JSON.parse(JSON.stringify(layoutBase));
+    Object.keys(extra || {}).forEach(function (k) {
+      if (extra[k] && typeof extra[k] === "object" && !Array.isArray(extra[k]) &&
+          l[k] && typeof l[k] === "object" && !Array.isArray(l[k])) {
+        Object.keys(extra[k]).forEach(function (kk) { l[k][kk] = extra[k][kk]; });
+      } else {
+        l[k] = extra[k];
+      }
+    });
+    return l;
+  }
+
+  function dibujar(id, traces, lay) {
+    Plotly.react(id, traces, layout(lay), configPlot);
+  }
+
+  function grafico1(filas) {
+    var meses = Array.from(new Set(filas.map(function (f) { return f.fecha; }))).sort();
+    var productos = Array.from(new Set(filas.map(function (f) { return f.producto; }))).sort(ordenarProductos);
+
+    // clave producto + fecha -> lista de tasas
+    var caja = new Map();
+    filas.forEach(function (f) {
+      var k = f.producto + "\u0000" + f.fecha;
+      if (!caja.has(k)) caja.set(k, []);
+      caja.get(k).push(f.tasa);
+    });
+
+    var traces = productos.map(function (p, i) {
+      return {
+        type: "scatter",
+        mode: "lines+markers",
+        name: p,
+        x: meses.map(etiquetaFecha),
+        y: meses.map(function (m) {
+          var v = caja.get(p + "\u0000" + m) || [];
+          return v.length ? +promedio(v).toFixed(2) : null;
+        }),
+        line: { width: 2.4, color: COLORES[i % COLORES.length] },
+        marker: { size: 7, color: COLORES[i % COLORES.length] },
+        connectgaps: true,
+        hovertemplate: "%{y:.2f} %<extra>" + p + "</extra>"
+      };
+    });
+
+    dibujar("graf1", traces, {
+      xaxis: { title: { text: "Corte mensual" }, type: "category", tickangle: 0, gridcolor: "#eef2f7" },
+      yaxis: { title: { text: "Tasa Efectiva Anual promedio (%)" }, gridcolor: "#eef2f7", zeroline: false },
+      legend: leyendaAbajo(),
+      margin: { l: 62, r: 24, t: 26, b: 150 },
+      hovermode: "x unified"
+    });
+  }
+
+  function graficoMinMax(id, filas, tipo, tituloY) {
+    var sub = filas.filter(function (f) { return String(f.op).toLowerCase().indexOf(tipo) === 0; });
+    if (!sub.length) {
+      Plotly.purge(id);
+      $$(id).innerHTML = '<p style="color:#b45309;font-size:13px;padding:24px 6px">No hay filas de operación “' + tipo + '” en el CSV.</p>';
+      return;
+    }
+    var porProducto = agrupar(sub, function (f) { return f.producto; });
+    var productos = Array.from(porProducto.keys()).sort(ordenarProductos);
+
+    var maxs = [], mins = [], proms = [];
+    productos.forEach(function (p) {
+      var xs = porProducto.get(p).map(function (f) { return f.tasa; });
+      maxs.push(+Math.max.apply(null, xs).toFixed(2));
+      mins.push(+Math.min.apply(null, xs).toFixed(2));
+      proms.push(+promedio(xs).toFixed(2));
+    });
+
+    var color = tipo === "activa" ? "#1d4ed8" : "#7c3aed";
+
+    var traces = [
+      {
+        type: "bar", name: "Máximo", x: productos, y: maxs,
+        marker: { color: color }, offsetgroup: "mm",
+        text: maxs.map(function (v) { return v.toFixed(2); }),
+        textposition: "outside", textfont: { size: 10 },
+        hovertemplate: "Máx: %{y:.2f} %<extra>%{x}</extra>"
+      },
+      {
+        type: "bar", name: "Mínimo", x: productos, y: mins,
+        marker: { color: "#cbd5e1" }, offsetgroup: "mm",
+        text: mins.map(function (v) { return v.toFixed(2); }),
+        textposition: "outside", textfont: { size: 10 },
+        hovertemplate: "Mín: %{y:.2f} %<extra>%{x}</extra>"
+      },
+      {
+        type: "scatter", mode: "markers", name: "Promedio",
+        x: productos, y: proms,
+        marker: { symbol: "diamond", size: 10, color: "#0f172a", line: { width: 1, color: "#fff" } },
+        hovertemplate: "Promedio: %{y:.2f} %<extra>%{x}</extra>"
+      }
+    ];
+
+    dibujar(id, traces, {
+      barmode: "group", bargap: 0.35, bargroupgap: 0.08,
+      xaxis: { title: { text: "Producto" }, tickangle: -18, gridcolor: "#eef2f7" },
+      yaxis: { title: { text: tituloY }, gridcolor: "#eef2f7", zeroline: false,
+               range: [0, Math.max.apply(null, maxs) * 1.18] },
+      legend: leyendaAbajo(),
+      margin: { l: 62, r: 24, t: 26, b: 110 }
+    });
+  }
+
+  function grafico4(filas) {
+    var bancos = Array.from(new Set(filas.map(function (f) { return f.banco; }))).sort(ordenarBancos);
+    var tipos = Array.from(new Set(filas.map(function (f) { return f.op; }))).sort(ordenarProductos);
+
+    var traces = tipos.map(function (t) {
+      var proms = [], arriba = [], abajo = [];
+      bancos.forEach(function (b) {
+        var xs = filas.filter(function (f) { return f.banco === b && f.op === t; }).map(function (f) { return f.tasa; });
+        if (!xs.length) { proms.push(null); arriba.push(0); abajo.push(0); return; }
+        var p = promedio(xs);
+        proms.push(+p.toFixed(2));
+        arriba.push(+(Math.max.apply(null, xs) - p).toFixed(2));
+        abajo.push(+(p - Math.min.apply(null, xs)).toFixed(2));
+      });
+      return {
+        type: "scatter", mode: "markers", name: t,
+        x: bancos, y: proms,
+        marker: { size: 14, color: colorTipo(t), line: { width: 1.5, color: "#ffffff" } },
+        error_y: { type: "data", symmetric: false, array: arriba, arrayminus: abajo,
+                   color: colorTipo(t), thickness: 1.4, width: 7 },
+        hovertemplate: "<b>%{x}</b><br>" + t + " promedio: %{y:.2f} %<extra></extra>"
+      };
+    });
+
+    dibujar("graf4", traces, {
+      xaxis: { title: { text: "Banco" }, tickangle: -22, gridcolor: "#eef2f7" },
+      yaxis: { title: { text: "Tasa Efectiva Anual promedio (%)" }, gridcolor: "#eef2f7", zeroline: false },
+      legend: leyendaAbajo(),
+      margin: { l: 62, r: 24, t: 26, b: 110 }
+    });
+  }
+
+  function kpis(filas) {
+    var bancos = new Set(), productos = new Set(), meses = new Set();
+    filas.forEach(function (f) { bancos.add(f.banco); productos.add(f.producto); meses.add(f.fecha); });
+    var ordenadas = Array.from(meses).sort();
+    var desde = ordenadas[0], hasta = ordenadas[ordenadas.length - 1];
+    var tasas = filas.map(function (f) { return f.tasa; });
+
+    var datos = [
+      { et: "Registros", va: filas.length.toLocaleString("es-BO"), su: "filas válidas del CSV" },
+      { et: "Bancos", va: bancos.size, su: "entidades distintas" },
+      { et: "Productos", va: productos.size, su: "segmentos / productos" },
+      { et: "Cortes", va: meses.size, su: etiquetaFecha(desde) + " → " + etiquetaFecha(hasta) },
+      { et: "Tasa mínima", va: Math.min.apply(null, tasas).toFixed(2) + " %", su: "de toda la base" },
+      { et: "Tasa máxima", va: Math.max.apply(null, tasas).toFixed(2) + " %", su: "de toda la base" }
+    ];
+
+    $$("kpis").innerHTML = datos.map(function (d) {
+      return '<div class="kpi"><div class="et">' + d.et + '</div><div class="va">' + d.va + '</div><div class="su">' + d.su + '</div></div>';
+    }).join("");
+  }
+
+  function render(filas, nombreArchivo) {
+    $$("panel").hidden = false;
+    $$("zona").style.display = nombreArchivo ? "none" : "";
+    $$("btnCargar").hidden = !nombreArchivo;
+    $$("nomArchivo").textContent = nombreArchivo || "—";
+
+    kpis(filas);
+    grafico1(filas);
+    graficoMinMax("graf2", filas, "activa", "Tasa activa (%)");
+    graficoMinMax("graf3", filas, "pasiva", "Tasa pasiva (%)");
+    grafico4(filas);
+
+    if (window.__ultimoArchivo !== nombreArchivo) {
+      estado("Archivo: " + nombreArchivo + " · " + new Date().toLocaleString("es-BO"));
+      window.__ultimoArchivo = nombreArchivo;
+    }
+  }
+
+  /* ------------------------------------------------------ carga de datos */
+
+  function leerArchivo(file) {
+    if (!file) return;
+    if (!/\.csv$/i.test(file.name) && !/text\/csv/.test(file.type)) {
+      aviso("error", "El archivo “" + file.name + "” no parece un CSV. Exportá la base a formato CSV e intentá de nuevo.");
+      return;
+    }
+    estado("Leyendo " + file.name + " …");
+    var lector = new FileReader();
+    lector.onload = function (e) { cargarTexto(e.target.result, file.name); };
+    lector.onerror = function () { aviso("error", "No se pudo leer el archivo. Probá de nuevo."); };
+    lector.readAsText(file, "UTF-8");
+  }
+
+  var zona = $$("zona");
+
+  ["dragenter", "dragover"].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); zona.classList.add("hover"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); zona.classList.remove("hover"); });
+  });
+  zona.addEventListener("drop", function (e) {
+    var dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) leerArchivo(dt.files[0]);
+  });
+
+  // permitir soltar en cualquier parte de la página
+  ["dragover", "drop"].forEach(function (ev) {
+    window.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
+  window.addEventListener("drop", function (e) {
+    var dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length) leerArchivo(dt.files[0]);
+  });
+
+  $$("archivo").addEventListener("change", function (e) {
+    if (e.target.files && e.target.files.length) leerArchivo(e.target.files[0]);
+  });
+
+  $$("btnCargar").addEventListener("click", function () {
+    $$("panel").hidden = true;
+    $$("zona").style.display = "";
+    $$("btnCargar").hidden = true;
+    $$("archivo").value = "";
+    estado("");
+    window.__ultimoArchivo = null;
+    aviso("info", "Elegí o arrastrá otro archivo CSV.");
+  });
+
+  // Autocarga opcional: sólo funciona si la página se sirve por http(s) y el CSV está al lado.
+  window.addEventListener("load", function () {
+    if (!CSV_AUTOCARGA) return;
+    fetch(CSV_AUTOCARGA, { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("no"); return r.text(); })
+      .then(function (t) { cargarTexto(t, CSV_AUTOCARGA); })
+      .catch(function () {
+        estado("Autocarga no disponible (abriste el archivo directamente). Arrastrá el CSV o usá el botón.");
+      });
+  });
+
+  window.TableroTasas = { cargarTexto: cargarTexto };
+})();
+</script>
+</body>
+</html>
